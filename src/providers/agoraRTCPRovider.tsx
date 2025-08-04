@@ -8,24 +8,26 @@ import {
   ReactNode,
 } from 'react';
 
-import AgoraRTC, {
+import {
   IAgoraRTCClient,
   ICameraVideoTrack,
   IMicrophoneAudioTrack,
   ILocalVideoTrack,
   ILocalAudioTrack,
-  IRemoteVideoTrack
+  IRemoteVideoTrack,
 } from 'agora-rtc-sdk-ng';
 
 interface AgoraContextType {
   client: IAgoraRTCClient | null;
   localAudioTrack: IMicrophoneAudioTrack | null;
-  localVideoTrack: ICameraVideoTrack | null;
+  localVideoTrack: ICameraVideoTrack | null ;
   screenTrack: ILocalVideoTrack | null;
-  join: () => Promise<void>;
+  join: (type: 'audio' | 'video') => Promise<void>;
   leave: () => Promise<void>;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => Promise<void>;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
   uid: number | null;
   channelName: string | null;
   remoteUsers: any[];
@@ -41,72 +43,143 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
   const [uid, setUid] = useState<number | null>(null);
   const [channelName, setChannelName] = useState<string | null>(null);
   const [hasJoined, setHasJoined] = useState(false);
- const [remoteUsers, setRemoteUsers] = useState<IRemoteVideoTrack[]>([]);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const agoraClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-    setClient(agoraClient);
+ const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
 
-    return () => {
-      agoraClient.removeAllListeners();
-    };
-  }, []);
+ const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 
-  useEffect(() => {
+
+useEffect(() => {
+  if (typeof window === 'undefined') return;
+
+  let isMounted = true;
+  let localClient: IAgoraRTCClient;
+
+  import('agora-rtc-sdk-ng').then((AgoraRTC) => {
+    if (!isMounted) return;
+
+    localClient = AgoraRTC.default.createClient({ mode: 'rtc', codec: 'vp8' });
+
+    // Store client in state
+    setClient(localClient);
+
+    // ✅ Set up event listeners
+    localClient.on('user-published', async (user, mediaType) => {
+      await localClient.subscribe(user, mediaType);
+      if (mediaType === 'video') {
+        setRemoteUsers((prev) => {
+          const existing = prev.find((u) => u.uid === user.uid);
+          if (existing) return prev;
+          return [...prev, user];
+        });
+      }
+    });
+
+    localClient.on('user-unpublished', (user) => {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+    });
+
+    localClient.on('user-left', (user) => {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+    });
+  });
+
+  return () => {
+    isMounted = false;
+    if (localClient) {
+      localClient.removeAllListeners();
+    }
+  };
+}, []);
+
+
+useEffect(() => {
   if (!client) return;
 
   const handleUserPublished = async (user: any, mediaType: 'audio' | 'video') => {
     await client.subscribe(user, mediaType);
 
     setRemoteUsers(prev => {
-      const exists = prev.find((u:any) => u.uid === user.uid);
+      const exists = prev.find((u: any) => u.uid === user.uid);
       if (!exists) return [...prev, user];
       return prev;
     });
 
-    if (mediaType === 'audio') user.audioTrack?.play();
+    if (mediaType === 'video') {
+      user.videoTrack?.play(`remote-player-${user.uid}`);
+    }
+
+    if (mediaType === 'audio') {
+      user.audioTrack?.play();
+    }
+  };
+
+  const handleUserJoined = (user: any) => {
+    setRemoteUsers(prev => {
+      const exists = prev.find((u: any) => u.uid === user.uid);
+      if (!exists) return [...prev, user];
+      return prev;
+    });
   };
 
   const handleUserUnpublished = (user: any) => {
-    setRemoteUsers(prev => prev.filter((u:any) => u.uid !== user.uid));
+    setRemoteUsers(prev => prev.filter((u: any) => u.uid !== user.uid));
+  };
+
+  const handleUserLeft = (user: any) => {
+    setRemoteUsers(prev => prev.filter((u: any) => u.uid !== user.uid));
   };
 
   client.on('user-published', handleUserPublished);
+  client.on('user-joined', handleUserJoined);
   client.on('user-unpublished', handleUserUnpublished);
+  client.on('user-left', handleUserLeft);
 
   return () => {
     client.off('user-published', handleUserPublished);
+    client.off('user-joined', handleUserJoined);
     client.off('user-unpublished', handleUserUnpublished);
+    client.off('user-left', handleUserLeft);
   };
 }, [client]);
 
 
- const join = async () => {
-  if (!client || hasJoined) return; 
+  const join = async (type: 'audio' | 'video') => {
+    if (!client || hasJoined) return;
 
-  try {
-    setHasJoined(true);
+    try {
+      setHasJoined(true);
 
-    const appId = 'f989c7c3d602421bb51abb5529ca90e5';
-    const channel = 'test-channel';
-    const uid = await client.join(appId, channel, null, null);
+      const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
 
-    setUid(uid as number);
-    setChannelName(channel);
+      const appId = 'f989c7c3d602421bb51abb5529ca90e5';
+      const channel = 'test-channel';
+      const uid = await client.join(appId, channel, null, null);
 
-    const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-    const videoTrack = await AgoraRTC.createCameraVideoTrack();
+      setUid(uid as number);
+      setChannelName(channel);
 
-    await client.publish([audioTrack, videoTrack]);
 
-    setLocalAudioTrack(audioTrack);
-    setLocalVideoTrack(videoTrack);
-  } catch (error) {
-    console.error('Error joining channel:', error);
-    setHasJoined(false); 
-  }
-};
+      let videoTrack;
+      let audioTrack;
 
+      if (type === 'audio') {
+        audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        await client.publish([audioTrack]);
+        setLocalAudioTrack(audioTrack);
+      } else {
+        audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        videoTrack = await AgoraRTC.createCameraVideoTrack();
+        await client.publish([audioTrack, videoTrack]);
+        setLocalAudioTrack(audioTrack);
+        setLocalVideoTrack(videoTrack);
+      }
+
+    } catch (error) {
+      console.error('Error joining channel:', error);
+      setHasJoined(false);
+    }
+  };
 
   const leave = async () => {
     if (!client) return;
@@ -129,6 +202,7 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
       }
 
       await client.leave();
+      setRemoteUsers([]);
 
       setLocalAudioTrack(null);
       setLocalVideoTrack(null);
@@ -144,6 +218,8 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
     if (!client) return;
 
     try {
+      const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
+
       const screenTrackResult = await AgoraRTC.createScreenVideoTrack(
         {
           encoderConfig: '1080p_1',
@@ -151,7 +227,6 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
         'auto'
       );
 
-      // Handle both return types
       let videoTrack: ILocalVideoTrack;
       let audioTrack: ILocalAudioTrack | undefined;
 
@@ -164,7 +239,6 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
       await client.publish([videoTrack]);
       setScreenTrack(videoTrack);
 
-      // Optional: if system audio is captured
       if (audioTrack) {
         await client.publish([audioTrack]);
       }
@@ -186,6 +260,94 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+
+  const mergeStreams = (): MediaStream => {
+  const combinedStream = new MediaStream();
+
+  // Add local tracks
+  if (localVideoTrack) {
+    const videoStream = localVideoTrack.getMediaStreamTrack();
+    combinedStream.addTrack(videoStream);
+  }
+
+  if (localAudioTrack) {
+    const audioStream = localAudioTrack.getMediaStreamTrack();
+    combinedStream.addTrack(audioStream);
+  }
+
+  // Add remote tracks
+  remoteUsers.forEach((user) => {
+    if (user.videoTrack) {
+      const remoteVideo = user.videoTrack.getMediaStreamTrack();
+      combinedStream.addTrack(remoteVideo);
+    }
+    if (user.audioTrack) {
+      const remoteAudio = user.audioTrack.getMediaStreamTrack();
+      combinedStream.addTrack(remoteAudio);
+    }
+  });
+
+  return combinedStream;
+};
+
+const startRecording = async (): Promise<void> => {
+  if (mediaRecorder) return;
+  try{
+  const tracks = [
+    localVideoTrack?.getMediaStreamTrack(),
+    localAudioTrack?.getMediaStreamTrack(),
+    ...remoteUsers
+      .map(u => [u.videoTrack?.getMediaStreamTrack(), u.audioTrack?.getMediaStreamTrack()])
+      .flat()
+      .filter(Boolean)
+  ];
+
+  const mixedStream = new MediaStream(tracks as MediaStreamTrack[]);
+
+  if (!mixedStream || mixedStream.getTracks().length === 0) {
+    console.error(" No tracks to record. Make sure audio/video is enabled.");
+    alert("Recording can't start: no audio/video tracks available.");
+    return;
+  }
+
+  const recorder = new MediaRecorder(mixedStream, {
+    mimeType: 'video/webm; codecs=vp8,opus'
+  });
+
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (e) => chunks.push(e.data);
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recording-${Date.now()}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  recorder.start();
+  setMediaRecorder(recorder);
+   } catch (err) {
+    console.error("Error starting recording", err);
+  }
+};
+
+
+
+const stopRecording = async () => {
+  try {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      setMediaRecorder(null);
+      console.log('Recording stopped');
+    }
+  } catch (error) {
+    console.error('Error stopping recording:', error);
+  }
+};
+
+
   return (
     <AgoraContext.Provider
       value={{
@@ -197,6 +359,8 @@ export const AgoraProvider = ({ children }: { children: ReactNode }) => {
         leave,
         startScreenShare,
         stopScreenShare,
+        startRecording,
+        stopRecording,
         uid,
         channelName,
         remoteUsers

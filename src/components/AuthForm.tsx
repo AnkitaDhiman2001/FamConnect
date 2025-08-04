@@ -4,9 +4,11 @@ import { AuthFormProps, User } from '@/types/authTypes'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation';
 import API from '@/utils/Api';
+import useNewContext from '@/providers/userSessionProvider';
 export default function AuthForm({mode, headerText, buttonText}: AuthFormProps) {
-    const router = useRouter();
-    const [user, setUser] = useState<User>({        
+  const router = useRouter();
+  const {setLoggedUser} = useNewContext();
+  const [user, setUser] = useState<User>({
         name: '',
         email: '',
         password: '',
@@ -32,7 +34,8 @@ export default function AuthForm({mode, headerText, buttonText}: AuthFormProps) 
               })
               if (response.data) {
                 router.push('/call');
-                localStorage.setItem('user', JSON.stringify(response.data));
+                setLoggedUser(response.data);
+                sessionStorage.setItem('user', JSON.stringify(response.data));
               }
             }
             catch (error) {
@@ -52,9 +55,9 @@ export default function AuthForm({mode, headerText, buttonText}: AuthFormProps) 
                 password: user.password
               })
               if (response.data) {
-                console.log(response.data, "response")
                 router.push('/call');
-                localStorage.setItem('user', JSON.stringify(response.data));
+                setLoggedUser(response.data);
+                sessionStorage.setItem('user', JSON.stringify(response.data));
               }
 
             }

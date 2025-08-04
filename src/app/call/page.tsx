@@ -2,18 +2,32 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useAgora } from '@/providers/agoraRTCPRovider';
+import useNewContext from '@/providers/userSessionProvider';
 
 export default function Page() {
   const agora = useAgora();
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-   const remoteUsers = agora.remoteUsers;
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  const remoteUsers = agora.remoteUsers;
+  const {loggedUser, setLoggedUser} = useNewContext();
   const [hasJoined, setHasJoined] = useState(false);
+  const [type, setType] = useState<'audio' | 'video'>('video');
 
   const localVideoRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoRefs = useRef<{ [uid: number]: HTMLDivElement }>({});
+
+  useEffect(() => {
+    const storedUser = sessionStorage.getItem('user');
+    if (storedUser) {
+      setLoggedUser(JSON.parse(storedUser));
+    }
+  }, []);
+
 
   useEffect(() => {
     return () => {
@@ -61,23 +75,90 @@ export default function Page() {
     }
   };
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+      .toString()
+      .padStart(2, '0');
+    const secs = (seconds % 60).toString().padStart(2, '0');
+    return `${mins}:${secs}`;
+  };
+
+  const toggleRecording = async () => {
+    if (!isRecording) {
+      try {
+        await agora.startRecording();
+        setIsRecording(true);
+        setRecordingTime(0); 
+
+        intervalRef.current = setInterval(() => {
+          setRecordingTime((prev) => prev + 1);
+        }, 1000);
+
+      } catch (error) {
+        console.error('Error starting recording:', error);
+      }
+    } else {
+      try {
+        await agora.stopRecording();
+        setIsRecording(false);
+
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+
+        setRecordingTime(0);
+      } catch (error) {
+        console.error('Error stopping recording:', error);
+      }
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, []);
+
+
   if (!hasJoined) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white">
+        <h1 className="text-xl font-bold">Username: {loggedUser?.name}</h1>
         <h2 className="text-2xl mb-4">Ready to join the room?</h2>
+        <div className="flex space-x-4 mb-4">
         <button
           onClick={async () => {
             try {
-              await agora.join();
+              await agora.join('video');
               setHasJoined(true);
+              setType('video');
             } catch (e) {
               console.error("Join failed", e);
             }
           }}
           className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
         >
-          Join Room
+          Join Video Call
         </button>
+          <button
+          onClick={async () => {
+            try {
+              await agora.join('audio');
+              setHasJoined(true);
+              setType('audio');
+            } catch (e) {
+              console.error("Join failed", e);
+            }
+          }}
+          className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded"
+        >
+          Join Audio Call
+        </button>
+        </div>
       </div>
     );
   }
@@ -85,6 +166,7 @@ export default function Page() {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col">
       <div className="bg-gray-800 p-4 flex justify-between items-center">
+        <h1 className="text-xl font-bold">Username: {loggedUser?.name}</h1>
         <h2 className="text-xl font-semibold">Room: {agora?.channelName}</h2>
         <button
           onClick={() => {
@@ -132,18 +214,29 @@ export default function Page() {
           >
             {isMicOn ? 'Mute' : 'Unmute'}
           </button>
-          <button
-            onClick={toggleCamera}
-            className={`px-3 py-2 rounded-xl ${isCameraOn ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-700'}`}
-          >
+          {type === 'video' && (
+            <button
+              onClick={toggleCamera}
+              className={`px-3 py-2 rounded-xl ${isCameraOn ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-700'}`}
+            >
             {isCameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
           </button>
+          )}
           <button
             onClick={toggleScreenShare}
             className={`px-3 py-2 rounded-xl ${isScreenSharing ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-yellow-500 hover:bg-yellow-600'}`}
           >
             {isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
           </button>
+
+          <button
+            onClick={toggleRecording} 
+            className="px-3 py-2 rounded-xl bg-green-600 hover:bg-green-700"
+          >
+           {isRecording ? `Stop Recording ${recordingTime > 0 && formatTime(recordingTime)}s` : 'Start Recording'} 
+          </button>
+
+
         </div>
         <input
           className="bg-gray-700 text-white px-4 py-2 rounded w-1/3"

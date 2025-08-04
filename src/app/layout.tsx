@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AgoraProvider } from "@/providers/agoraRTCPRovider";
+import { ContextProvider } from "@/providers/userSessionProvider";
+
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,9 +30,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+      <ContextProvider>
        <AgoraProvider>
         {children}
         </AgoraProvider> 
+      </ContextProvider>
       </body>
     </html>
   );

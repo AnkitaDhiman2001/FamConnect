@@ -76,9 +76,6 @@ class API {
             resent,
             path
           );
-
-          // if (Process.isDev) console.log("POST", path, "\n", parsed);
-
           resolve(parsed);
         })
         .catch((err: any) => {
@@ -114,9 +111,6 @@ class API {
             resent,
             path
           );
-
-          // if (Process.isDev) console.log("POST", path, "\n", parsed);
-
           resolve(parsed);
         })
         .catch((err: any) => {
@@ -154,8 +148,6 @@ class API {
             resent,
             path
           );
-
-          // if (Process.isDev) console.log("PUT", path, "\n", parsed);
 
           resolve(parsed);
         })
@@ -195,9 +187,6 @@ class API {
             resent,
             path
           );
-
-          // if (Process.isDev) console.log("DELETE", path, "\n", parsed);
-
           resolve(parsed);
         })
         .catch((err: any) => {
