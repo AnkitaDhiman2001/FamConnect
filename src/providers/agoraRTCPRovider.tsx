@@ -14,20 +14,24 @@ import {
   IMicrophoneAudioTrack,
   ILocalVideoTrack,
   ILocalAudioTrack,
-  IRemoteVideoTrack,
 } from 'agora-rtc-sdk-ng';
 
 interface AgoraContextType {
   client: IAgoraRTCClient | null;
   localAudioTrack: IMicrophoneAudioTrack | null;
-  localVideoTrack: ICameraVideoTrack | null ;
+  localVideoTrack: ICameraVideoTrack | null;
   screenTrack: ILocalVideoTrack | null;
-  join: (type: 'audio' | 'video') => Promise<void>;
+  join(type: 'audio' | 'video'): Promise<void>;
+  join(type: 'live', role: 'host' | 'audience'): Promise<void>;
+  join(type: 'audio' | 'video' | 'live', role?: 'host' | 'audience'): Promise<void>;
   leave: () => Promise<void>;
   startScreenShare: () => Promise<void>;
   stopScreenShare: () => Promise<void>;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
+  joinLiveAsHost: () => Promise<void>;
+  joinLiveAsAudience: () => Promise<void>;
+  leaveLive: () => Promise<void>;
   uid: number | null;
   channelName: string | null;
   remoteUsers: any[];
@@ -37,153 +41,100 @@ const AgoraContext = createContext<AgoraContextType | null>(null);
 
 export const AgoraProvider = ({ children }: { children: ReactNode }) => {
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
+  const [screenClient, setScreenClient] = useState<IAgoraRTCClient | null>(null);
+  const [liveClient, setLiveClient] = useState<IAgoraRTCClient | null>(null);
+
   const [localAudioTrack, setLocalAudioTrack] = useState<IMicrophoneAudioTrack | null>(null);
   const [localVideoTrack, setLocalVideoTrack] = useState<ICameraVideoTrack | null>(null);
   const [screenTrack, setScreenTrack] = useState<ILocalVideoTrack | null>(null);
   const [uid, setUid] = useState<number | null>(null);
-  const [channelName, setChannelName] = useState<string | null>(null);
+  const [channelName, setChannelName] = useState<string | null>('test-channel');
   const [hasJoined, setHasJoined] = useState(false);
- const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
+  const [remoteUsers, setRemoteUsers] = useState<any[]>([]);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
 
- const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  // Initialize RTC client
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
 
-
-useEffect(() => {
-  if (typeof window === 'undefined') return;
-
-  let isMounted = true;
-  let localClient: IAgoraRTCClient;
-
-  import('agora-rtc-sdk-ng').then((AgoraRTC) => {
-    if (!isMounted) return;
-
-    localClient = AgoraRTC.default.createClient({ mode: 'rtc', codec: 'vp8' });
-
-    // Store client in state
-    setClient(localClient);
-
-    // ✅ Set up event listeners
-    localClient.on('user-published', async (user, mediaType) => {
-      await localClient.subscribe(user, mediaType);
-      if (mediaType === 'video') {
-        setRemoteUsers((prev) => {
-          const existing = prev.find((u) => u.uid === user.uid);
-          if (existing) return prev;
-          return [...prev, user];
-        });
-      }
+    import('agora-rtc-sdk-ng').then((AgoraRTC) => {
+      const rtcClient = AgoraRTC.default.createClient({ mode: 'rtc', codec: 'vp8' });
+      setClient(rtcClient);
     });
+  }, []);
 
-    localClient.on('user-unpublished', (user) => {
-      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
-    });
+  // Join normal RTC call
+const join = async (
+  type: 'audio' | 'video' | 'live',
+  role: 'host' | 'audience' = 'host' 
+) => {
+  if (!client || hasJoined) return;
+  setHasJoined(true);
 
-    localClient.on('user-left', (user) => {
-      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
-    });
-  });
+  try {
+    const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
+    const appId = 'f989c7c3d602421bb51abb5529ca90e5';
 
-  return () => {
-    isMounted = false;
-    if (localClient) {
-      localClient.removeAllListeners();
-    }
-  };
-}, []);
+    client.setClientRole(role); 
 
+    const uid = await client.join(
+      appId,
+      channelName!,
+      null,
+      null
+    );
 
-useEffect(() => {
-  if (!client) return;
+    setUid(uid as number);
 
-  const handleUserPublished = async (user: any, mediaType: 'audio' | 'video') => {
-    await client.subscribe(user, mediaType);
-
-    setRemoteUsers(prev => {
-      const exists = prev.find((u: any) => u.uid === user.uid);
-      if (!exists) return [...prev, user];
-      return prev;
-    });
-
-    if (mediaType === 'video') {
-      user.videoTrack?.play(`remote-player-${user.uid}`);
+    if (type === 'live') {
+      await client.setClientRole(role);
     }
 
-    if (mediaType === 'audio') {
-      user.audioTrack?.play();
-    }
-  };
+    // HOSTS can publish
+    if (role === 'host') {
+      const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      let videoTrack: ICameraVideoTrack | null = null;
 
-  const handleUserJoined = (user: any) => {
-    setRemoteUsers(prev => {
-      const exists = prev.find((u: any) => u.uid === user.uid);
-      if (!exists) return [...prev, user];
-      return prev;
-    });
-  };
-
-  const handleUserUnpublished = (user: any) => {
-    setRemoteUsers(prev => prev.filter((u: any) => u.uid !== user.uid));
-  };
-
-  const handleUserLeft = (user: any) => {
-    setRemoteUsers(prev => prev.filter((u: any) => u.uid !== user.uid));
-  };
-
-  client.on('user-published', handleUserPublished);
-  client.on('user-joined', handleUserJoined);
-  client.on('user-unpublished', handleUserUnpublished);
-  client.on('user-left', handleUserLeft);
-
-  return () => {
-    client.off('user-published', handleUserPublished);
-    client.off('user-joined', handleUserJoined);
-    client.off('user-unpublished', handleUserUnpublished);
-    client.off('user-left', handleUserLeft);
-  };
-}, [client]);
-
-
-  const join = async (type: 'audio' | 'video') => {
-    if (!client || hasJoined) return;
-
-    try {
-      setHasJoined(true);
-
-      const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
-
-      const appId = 'f989c7c3d602421bb51abb5529ca90e5';
-      const channel = 'test-channel';
-      const uid = await client.join(appId, channel, null, null);
-
-      setUid(uid as number);
-      setChannelName(channel);
-
-
-      let videoTrack;
-      let audioTrack;
-
-      if (type === 'audio') {
-        audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-        await client.publish([audioTrack]);
-        setLocalAudioTrack(audioTrack);
-      } else {
-        audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      if (type === 'video' || type === 'live') {
         videoTrack = await AgoraRTC.createCameraVideoTrack();
         await client.publish([audioTrack, videoTrack]);
-        setLocalAudioTrack(audioTrack);
         setLocalVideoTrack(videoTrack);
+      } else {
+        await client.publish([audioTrack]);
       }
 
-    } catch (error) {
-      console.error('Error joining channel:', error);
-      setHasJoined(false);
+      setLocalAudioTrack(audioTrack);
     }
-  };
+
+    // LISTEN for remote user events (works for all roles)
+    client.on('user-published', async (user, mediaType) => {
+      await client.subscribe(user, mediaType);
+      setRemoteUsers((prev) => [...prev.filter((u) => u.uid !== user.uid), user]);
+
+      if (mediaType === 'video') {
+        user.videoTrack?.play(`remote-player-${user.uid}`);
+      }
+      if (mediaType === 'audio') {
+        user.audioTrack?.play();
+      }
+    });
+
+    client.on('user-unpublished', (user) => {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+    });
+
+    client.on('user-left', (user) => {
+      setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+    });
+  } catch (err) {
+    console.error('Join RTC Error:', err);
+    setHasJoined(false);
+  }
+};
+
 
   const leave = async () => {
     if (!client) return;
-
     try {
       if (localAudioTrack) {
         localAudioTrack.stop();
@@ -198,155 +149,162 @@ useEffect(() => {
       if (screenTrack) {
         screenTrack.stop();
         screenTrack.close();
-        setScreenTrack(null);
       }
 
       await client.leave();
-      setRemoteUsers([]);
-
       setLocalAudioTrack(null);
       setLocalVideoTrack(null);
+      setRemoteUsers([]);
       setUid(null);
-      setChannelName(null);
       setHasJoined(false);
-    } catch (error) {
-      console.error('Error leaving channel:', error);
+    } catch (err) {
+      console.error('Leave RTC Error:', err);
     }
   };
 
   const startScreenShare = async () => {
-    if (!client) return;
+    if (!client || !channelName) return;
 
     try {
       const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
+      const screenClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+      setScreenClient(screenClient);
 
-      const screenTrackResult = await AgoraRTC.createScreenVideoTrack(
-        {
-          encoderConfig: '1080p_1',
-        },
-        'auto'
-      );
+      await screenClient.join('f989c7c3d602421bb51abb5529ca90e5', channelName, null, null);
 
-      let videoTrack: ILocalVideoTrack;
-      let audioTrack: ILocalAudioTrack | undefined;
+      const screenTrackResult = await AgoraRTC.createScreenVideoTrack({ encoderConfig: '1080p_1' }, 'auto');
+
+      let screenVideoTrack: ILocalVideoTrack;
+      let screenAudioTrack: ILocalAudioTrack | undefined;
 
       if (Array.isArray(screenTrackResult)) {
-        [videoTrack, audioTrack] = screenTrackResult;
+        [screenVideoTrack, screenAudioTrack] = screenTrackResult;
       } else {
-        videoTrack = screenTrackResult;
+        screenVideoTrack = screenTrackResult;
       }
 
-      await client.publish([videoTrack]);
-      setScreenTrack(videoTrack);
-
-      if (audioTrack) {
-        await client.publish([audioTrack]);
-      }
+      await screenClient.publish(screenAudioTrack ? [screenVideoTrack, screenAudioTrack] : [screenVideoTrack]);
+      setScreenTrack(screenVideoTrack);
     } catch (error) {
       console.error('Error starting screen share:', error);
     }
   };
 
   const stopScreenShare = async () => {
-    if (!client || !screenTrack) return;
+    if (!screenTrack || !screenClient) return;
 
     try {
-      await client.unpublish(screenTrack);
+      await screenClient.unpublish(screenTrack);
       screenTrack.stop();
       screenTrack.close();
+      await screenClient.leave();
       setScreenTrack(null);
+      setScreenClient(null);
     } catch (error) {
       console.error('Error stopping screen share:', error);
     }
   };
 
+  const startRecording = async () => {
+    if (mediaRecorder) return;
 
-  const mergeStreams = (): MediaStream => {
-  const combinedStream = new MediaStream();
+    const tracks = [
+      localVideoTrack?.getMediaStreamTrack(),
+      localAudioTrack?.getMediaStreamTrack(),
+      ...remoteUsers
+        .flatMap((u) => [u.videoTrack?.getMediaStreamTrack(), u.audioTrack?.getMediaStreamTrack()])
+        .filter(Boolean),
+    ];
 
-  // Add local tracks
-  if (localVideoTrack) {
-    const videoStream = localVideoTrack.getMediaStreamTrack();
-    combinedStream.addTrack(videoStream);
-  }
+    const mixedStream = new MediaStream(tracks as MediaStreamTrack[]);
 
-  if (localAudioTrack) {
-    const audioStream = localAudioTrack.getMediaStreamTrack();
-    combinedStream.addTrack(audioStream);
-  }
-
-  // Add remote tracks
-  remoteUsers.forEach((user) => {
-    if (user.videoTrack) {
-      const remoteVideo = user.videoTrack.getMediaStreamTrack();
-      combinedStream.addTrack(remoteVideo);
+    if (!mixedStream || mixedStream.getTracks().length === 0) {
+      console.error('No tracks to record');
+      alert('No audio/video to record.');
+      return;
     }
-    if (user.audioTrack) {
-      const remoteAudio = user.audioTrack.getMediaStreamTrack();
-      combinedStream.addTrack(remoteAudio);
-    }
-  });
 
-  return combinedStream;
-};
+    const recorder = new MediaRecorder(mixedStream, { mimeType: 'video/webm; codecs=vp8,opus' });
 
-const startRecording = async (): Promise<void> => {
-  if (mediaRecorder) return;
-  try{
-  const tracks = [
-    localVideoTrack?.getMediaStreamTrack(),
-    localAudioTrack?.getMediaStreamTrack(),
-    ...remoteUsers
-      .map(u => [u.videoTrack?.getMediaStreamTrack(), u.audioTrack?.getMediaStreamTrack()])
-      .flat()
-      .filter(Boolean)
-  ];
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recording-${Date.now()}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
 
-  const mixedStream = new MediaStream(tracks as MediaStreamTrack[]);
-
-  if (!mixedStream || mixedStream.getTracks().length === 0) {
-    console.error(" No tracks to record. Make sure audio/video is enabled.");
-    alert("Recording can't start: no audio/video tracks available.");
-    return;
-  }
-
-  const recorder = new MediaRecorder(mixedStream, {
-    mimeType: 'video/webm; codecs=vp8,opus'
-  });
-
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (e) => chunks.push(e.data);
-  recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: 'video/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `recording-${Date.now()}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
+    recorder.start();
+    setMediaRecorder(recorder);
   };
 
-  recorder.start();
-  setMediaRecorder(recorder);
-   } catch (err) {
-    console.error("Error starting recording", err);
-  }
-};
-
-
-
-const stopRecording = async () => {
-  try {
+  const stopRecording = async () => {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
       setMediaRecorder(null);
-      console.log('Recording stopped');
     }
-  } catch (error) {
-    console.error('Error stopping recording:', error);
-  }
-};
+  };
 
+  // Live Streaming: Host
+  const joinLiveAsHost = async () => {
+    try {
+      const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
+      const live = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+      await live.setClientRole('host');
+
+      await live.join('f989c7c3d602421bb51abb5529ca90e5', channelName!, null, null);
+      const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      const videoTrack = await AgoraRTC.createCameraVideoTrack();
+
+      await live.publish([audioTrack, videoTrack]);
+      setLiveClient(live);
+    } catch (err) {
+      console.error('Join live as host failed:', err);
+    }
+  };
+
+  // Live Streaming: Audience
+  const joinLiveAsAudience = async () => {
+    try {
+      const { default: AgoraRTC } = await import('agora-rtc-sdk-ng');
+      const live = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+      await live.setClientRole('audience');
+
+      await live.join('f989c7c3d602421bb51abb5529ca90e5', channelName!, null, null);
+
+      live.on('user-published', async (user, mediaType) => {
+        await live.subscribe(user, mediaType);
+        if (mediaType === 'video') user.videoTrack?.play(`remote-player-${user.uid}`);
+        if (mediaType === 'audio') user.audioTrack?.play();
+        setRemoteUsers((prev) => [...prev.filter((u) => u.uid !== user.uid), user]);
+      });
+
+      live.on('user-unpublished', (user) => {
+        setRemoteUsers((prev) => prev.filter((u) => u.uid !== user.uid));
+      });
+
+      setLiveClient(live);
+    } catch (err) {
+      console.error('Join live as audience failed:', err);
+    }
+  };
+
+  const leaveLive = async () => {
+    if (!liveClient) return;
+
+    try {
+      await liveClient.leave();
+      liveClient.removeAllListeners();
+      setLiveClient(null);
+      setRemoteUsers([]);
+    } catch (err) {
+      console.error('Leave live failed:', err);
+    }
+  };
 
   return (
     <AgoraContext.Provider
@@ -361,9 +319,12 @@ const stopRecording = async () => {
         stopScreenShare,
         startRecording,
         stopRecording,
+        joinLiveAsHost,
+        joinLiveAsAudience,
+        leaveLive,
         uid,
         channelName,
-        remoteUsers
+        remoteUsers,
       }}
     >
       {children}

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAgora } from '@/providers/agoraRTCPRovider';
 import useNewContext from '@/providers/userSessionProvider';
+import LiveChatBox from '@/components/LiveChatBot';
+
 
 export default function Page() {
   const agora = useAgora();
@@ -16,11 +18,25 @@ export default function Page() {
   const remoteUsers = agora.remoteUsers;
   const {loggedUser, setLoggedUser} = useNewContext();
   const [hasJoined, setHasJoined] = useState(false);
-  const [type, setType] = useState<'audio' | 'video'>('video');
+  const [type, setType] = useState<'audio' | 'video' | 'live'>('video');
 
   const localVideoRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoRefs = useRef<{ [uid: number]: HTMLDivElement }>({});
+  const [isMobile, setIsMobile] = useState(false);
+  const [input, setInput] = useState('');
 
+
+  useEffect(() => {
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(userAgent);
+      setIsMobile(isMobileDevice);
+    };
+
+    checkMobile();
+  }, []);
+
+  
   useEffect(() => {
     const storedUser = sessionStorage.getItem('user');
     if (storedUser) {
@@ -144,12 +160,11 @@ export default function Page() {
         >
           Join Video Call
         </button>
+
           <button
           onClick={async () => {
             try {
-              await agora.join('audio');
-              setHasJoined(true);
-              setType('audio');
+              console.log("live streaming")
             } catch (e) {
               console.error("Join failed", e);
             }
@@ -158,6 +173,37 @@ export default function Page() {
         >
           Join Audio Call
         </button>
+
+          <button
+            onClick={async () => {
+              try {
+                await agora.join('live', 'host');
+                setHasJoined(true);
+                setType('live');
+              } catch (e) {
+                console.error("Host join failed", e);
+              }
+            }}
+            className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded"
+          >
+            Go Live as Host
+          </button>
+
+          <button
+            onClick={async () => {
+              try {
+                await agora.join('live', 'audience');
+                setHasJoined(true);
+                setType('live');
+              } catch (e) {
+                console.error("Audience join failed", e);
+              }
+            }}
+            className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
+          >
+            Join as Audience
+          </button>
+
         </div>
       </div>
     );
@@ -180,7 +226,6 @@ export default function Page() {
       </div>
 
       <div className="flex-grow p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {/* Local video */}
         <div className="w-full h-64 bg-black rounded-xl overflow-hidden relative">
           <div ref={localVideoRef} className="w-full h-full" />
           <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded">
@@ -188,22 +233,35 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Remote videos */}
         {remoteUsers.map((user) => (
           <div
-            key={user.uid}
-            className="w-full h-64 bg-black rounded-xl overflow-hidden relative"
-            ref={(el) => {
-              if (el && user.videoTrack) {
-                user.videoTrack.play(el);
-              }
-            }}
-          >
+              id={`remote-player-${user.uid}`}
+              key={user.uid}
+              className="w-full h-64 bg-black rounded-xl overflow-hidden relative"
+            >
+              <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded">
+                User: {user.uid}
+              </div>
+            </div>
+
+        ))}
+
+        {agora.screenTrack && (
+          <div className="w-full h-64 bg-black rounded-xl overflow-hidden relative">
+            <div
+              ref={(el) => {
+                if (el && agora.screenTrack) {
+                  agora.screenTrack.play(el);
+                }
+              }}
+              className="w-full h-full"
+            />
             <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded">
-              User: {user.uid}
+              Shared Screen
             </div>
           </div>
-        ))}
+        )}
+
       </div>
 
       <div className="bg-gray-800 p-4 flex justify-between items-center">
@@ -222,12 +280,13 @@ export default function Page() {
             {isCameraOn ? 'Turn Off Camera' : 'Turn On Camera'}
           </button>
           )}
-          <button
+          {!isMobile &&  (<button
             onClick={toggleScreenShare}
             className={`px-3 py-2 rounded-xl ${isScreenSharing ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-yellow-500 hover:bg-yellow-600'}`}
           >
             {isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
           </button>
+          )}
 
           <button
             onClick={toggleRecording} 
@@ -238,11 +297,11 @@ export default function Page() {
 
 
         </div>
-        <input
-          className="bg-gray-700 text-white px-4 py-2 rounded w-1/3"
-          placeholder="Type a message..."
-        />
+         <div className="w-[400px]">
+        <LiveChatBox userId={loggedUser.id?.toString()} roomId={'testroom'} />
+      </div>
       </div>
     </div>
   );
 }
+
